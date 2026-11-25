@@ -20,25 +20,28 @@ pipeline {
     }
 
     environment {
+        // Docker Hub details
         DOCKERHUB_USERNAME = 'YOUR_DOCKERHUB_USERNAME'
         DOCKERHUB_REPOSITORY = 'company-website'
         DOCKERHUB_CREDENTIAL_ID = 'dockerhub-credentials'
 
+        // Deployment server details
         DEPLOYMENT_SERVER_IP = 'YOUR_DEPLOYMENT_SERVER_PRIVATE_IP'
         DEPLOYMENT_SSH_CREDENTIAL_ID = 'deployment-server-ssh'
 
-        GITHUB_REPOSITORY_URL = 'https://github.com/YOUR-USERNAME/company-website.git'
+        // Correct GitHub repository URL
+        GITHUB_REPOSITORY_URL = 'https://github.com/Ameesha-vijayan/company-website.git'
 
+        // Docker image and container
         IMAGE_NAME = "${DOCKERHUB_USERNAME}/${DOCKERHUB_REPOSITORY}"
         CONTAINER_NAME = 'company-website'
     }
 
     stages {
 
-        // =========================
-        // BUILD STAGE
-        // Runs on BUILD SERVER
-        // =========================
+        // =====================================
+        // BUILD STAGE - BUILD SERVER
+        // =====================================
 
         stage('BUILD') {
             agent {
@@ -98,11 +101,9 @@ pipeline {
             }
         }
 
-        // =========================
-        // DEPLOY STAGE
-        // Runs SSH commands from Jenkins
-        // on the built-in node
-        // =========================
+        // =====================================
+        // DEPLOY STAGE - DEPLOYMENT SERVER
+        // =====================================
 
         stage('DEPLOY') {
             agent {
@@ -163,8 +164,7 @@ pipeline {
                             runOnDeployServer(
                                 "sleep 3 && " +
                                 "docker ps --filter name=${CONTAINER_NAME} && " +
-                                "curl -fsS http://localhost:9090 " +
-                                "> /dev/null && " +
+                                "curl -fsS -o /dev/null http://localhost:9090 && " +
                                 "echo 'Website deployed successfully'"
                             )
                         }
@@ -177,11 +177,11 @@ pipeline {
     post {
         success {
             echo 'BUILD AND DEPLOYMENT SUCCESSFUL!'
-            echo 'Open http://DEPLOYMENT-PUBLIC-IP:9090'
+            echo 'Open http://YOUR-DEPLOYMENT-PUBLIC-IP:9090'
         }
 
         failure {
-            echo 'Pipeline failed. Check Jenkins Console Output.'
+            echo 'PIPELINE FAILED! Check Jenkins Console Output.'
         }
     }
 }
