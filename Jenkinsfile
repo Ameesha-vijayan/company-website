@@ -42,7 +42,7 @@ pipeline {
 
         stage('BUILD') {
             agent {
-                label 'build-server'
+                label 'build-server-agent'
             }
 
             stages {
