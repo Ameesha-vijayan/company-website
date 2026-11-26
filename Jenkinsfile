@@ -1,16 +1,19 @@
+```groovy
 pipeline {
-    agent {
-        label 'build-server-agent'
-    }
+    agent none
 
     environment {
         DOCKER_IMAGE = 'company-website'
         DOCKER_TAG = 'latest'
+        CONTAINER_NAME = 'company-website'
     }
 
     stages {
 
         stage('Checkout') {
+            agent {
+                label 'build-agent'
+            }
             steps {
                 git branch: 'main',
                     url: 'https://github.com/Ameesha-vijayan/company-website.git'
@@ -18,6 +21,9 @@ pipeline {
         }
 
         stage('Build Docker Image') {
+            agent {
+                label 'build-agent'
+            }
             steps {
                 sh '''
                     docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
@@ -26,14 +32,21 @@ pipeline {
         }
 
         stage('Verify Image') {
+            agent {
+                label 'build-agent'
+            }
             steps {
                 sh '''
                     docker images
+                    docker image inspect ${DOCKER_IMAGE}:${DOCKER_TAG}
                 '''
             }
         }
 
         stage('Push to Docker Hub') {
+            agent {
+                label 'build-agent'
+            }
             steps {
                 withCredentials([
                     usernamePassword(
@@ -43,7 +56,8 @@ pipeline {
                     )
                 ]) {
                     sh '''
-                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                        echo "$DOCKER_PASS" | docker login \
+                            -u "$DOCKER_USER" --password-stdin
 
                         docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} \
                             $DOCKER_USER/${DOCKER_IMAGE}:${DOCKER_TAG}
@@ -58,33 +72,22 @@ pipeline {
 
         stage('Deploy to Server') {
             agent {
-                label 'deploy-server-agent'
+                label 'deploy-agent'
             }
-
             steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'dockerhub-credential',
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
-                    )
-                ]) {
-                    sh '''
-                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                sh '''
+                    docker pull ${DOCKER_HUB_USER}/${DOCKER_IMAGE}:${DOCKER_TAG}
 
-                        docker pull $DOCKER_USER/${DOCKER_IMAGE}:${DOCKER_TAG}
+                    docker stop ${CONTAINER_NAME} || true
+                    docker rm ${CONTAINER_NAME} || true
 
-                        docker stop company-website || true
-                        docker rm company-website || true
+                    docker run -d \
+                        --name ${CONTAINER_NAME} \
+                        -p 9090:80 \
+                        ${DOCKER_HUB_USER}/${DOCKER_IMAGE}:${DOCKER_TAG}
 
-                        docker run -d \
-                            --name company-website \
-                            -p 9090:80 \
-                            $DOCKER_USER/${DOCKER_IMAGE}:${DOCKER_TAG}
-
-                        docker logout
-                    '''
-                }
+                    docker ps
+                '''
             }
         }
     }
@@ -97,5 +100,10 @@ pipeline {
         failure {
             echo 'CI/CD Pipeline failed. Check the console output.'
         }
+
+        always {
+            echo 'Pipeline execution finished.'
+        }
     }
 }
+```
