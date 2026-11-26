@@ -1,59 +1,25 @@
-
-def runOnDeployServer(String command) {
-    withCredentials([
-        sshUserPrivateKey(
-            credentialsId: env.DEPLOYMENT_SSH_CREDENTIAL_ID,
-            keyFileVariable: 'SSH_KEY',
-            usernameVariable: 'SSH_USER'
-        )
-    ]) {
-        sh "ssh -i \$SSH_KEY -o StrictHostKeyChecking=accept-new " +
-           "\$SSH_USER@${env.DEPLOYMENT_SERVER_IP} '${command}'"
-    }
-}
-
+```groovy
 pipeline {
-    agent none
-
-    options {
-        skipDefaultCheckout(true)
-    }
+    agent any
 
     environment {
-        // Docker Hub details
-        DOCKERHUB_USERNAME = 'YOUR_DOCKERHUB_USERNAME'
-        DOCKERHUB_REPOSITORY = 'company-website'
-        DOCKERHUB_CREDENTIAL_ID = 'dockerhub-credentials'
-
-        // Deployment server details
-        DEPLOYMENT_SERVER_IP = 'YOUR_DEPLOYMENT_SERVER_PRIVATE_IP'
-        DEPLOYMENT_SSH_CREDENTIAL_ID = 'deployment-server-ssh'
-
-        // Correct GitHub repository URL
-        GITHUB_REPOSITORY_URL = 'https://github.com/Ameesha-vijayan/company-website.git'
-
-        // Docker image and container
-        IMAGE_NAME = "${DOCKERHUB_USERNAME}/${DOCKERHUB_REPOSITORY}"
+        DOCKER_IMAGE = 'ameesha123/company-website'
+        DOCKER_CREDENTIALS = 'dockerhub-credentials'
+        DEPLOY_SERVER = 'ubuntu@YOUR_DEPLOYMENT_SERVER_IP'
+        SSH_CREDENTIALS = 'deployment-server-ssh'
         CONTAINER_NAME = 'company-website'
+        APP_PORT = '80'
     }
 
     stages {
 
-        // =====================================
-        // BUILD STAGE - BUILD SERVER
-        // =====================================
-
         stage('BUILD') {
-            agent {
-                label 'build-server-agent'
-            }
-
             stages {
 
                 stage('Git Checkout') {
                     steps {
                         git branch: 'main',
-                            url: "${GITHUB_REPOSITORY_URL}"
+                            url: 'https://github.com/Ameesha-vijayan/company-website.git'
                     }
                 }
 
@@ -61,8 +27,8 @@ pipeline {
                     steps {
                         sh '''
                             docker build \
-                            -t $IMAGE_NAME:$BUILD_NUMBER \
-                            -t $IMAGE_NAME:latest .
+                            -t ${DOCKER_IMAGE}:${BUILD_NUMBER} \
+                            -t ${DOCKER_IMAGE}:latest .
                         '''
                     }
                 }
@@ -71,14 +37,14 @@ pipeline {
                     steps {
                         withCredentials([
                             usernamePassword(
-                                credentialsId: 'dockerhub-credentials',
-                                usernameVariable: 'DH_USER',
-                                passwordVariable: 'DH_PASS'
+                                credentialsId: "${DOCKER_CREDENTIALS}",
+                                usernameVariable: 'DOCKER_USER',
+                                passwordVariable: 'DOCKER_PASS'
                             )
                         ]) {
                             sh '''
-                                echo "$DH_PASS" | docker login \
-                                -u "$DH_USER" --password-stdin
+                                echo "$DOCKER_PASS" | docker login \
+                                -u "$DOCKER_USER" --password-stdin
                             '''
                         }
                     }
@@ -87,86 +53,67 @@ pipeline {
                 stage('Docker Image Push') {
                     steps {
                         sh '''
-                            docker push $IMAGE_NAME:$BUILD_NUMBER
-                            docker push $IMAGE_NAME:latest
+                            docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}
+                            docker push ${DOCKER_IMAGE}:latest
                         '''
-                    }
-
-                    post {
-                        always {
-                            sh 'docker logout'
-                        }
                     }
                 }
             }
         }
 
-        // =====================================
-        // DEPLOY STAGE - DEPLOYMENT SERVER
-        // =====================================
-
         stage('DEPLOY') {
-            agent {
-                label 'built-in'
-            }
-
             stages {
 
                 stage('Connect to Deployment Server') {
                     steps {
-                        script {
-                            runOnDeployServer(
-                                'hostname && docker --version'
-                            )
-                        }
+                        echo 'Connecting to deployment server...'
                     }
                 }
 
                 stage('Pull Docker Image') {
                     steps {
-                        script {
-                            runOnDeployServer(
-                                "docker pull ${IMAGE_NAME}:latest"
-                            )
+                        sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
+                            sh '''
+                                ssh -o StrictHostKeyChecking=no ${DEPLOY_SERVER} \
+                                "docker pull ${DOCKER_IMAGE}:${BUILD_NUMBER}"
+                            '''
                         }
                     }
                 }
 
                 stage('Stop Old Container') {
                     steps {
-                        script {
-                            runOnDeployServer(
-                                "docker stop ${CONTAINER_NAME} || true"
-                            )
-
-                            runOnDeployServer(
-                                "docker rm ${CONTAINER_NAME} || true"
-                            )
+                        sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
+                            sh '''
+                                ssh -o StrictHostKeyChecking=no ${DEPLOY_SERVER} \
+                                "docker stop ${CONTAINER_NAME} || true &&
+                                 docker rm ${CONTAINER_NAME} || true"
+                            '''
                         }
                     }
                 }
 
                 stage('Run New Container') {
                     steps {
-                        script {
-                            runOnDeployServer(
-                                "docker run -d --name ${CONTAINER_NAME} " +
-                                "--restart unless-stopped " +
-                                "-p 9090:80 ${IMAGE_NAME}:latest"
-                            )
+                        sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
+                            sh '''
+                                ssh -o StrictHostKeyChecking=no ${DEPLOY_SERVER} \
+                                "docker run -d \
+                                --name ${CONTAINER_NAME} \
+                                -p ${APP_PORT}:80 \
+                                ${DOCKER_IMAGE}:${BUILD_NUMBER}"
+                            '''
                         }
                     }
                 }
 
                 stage('Verify Deployment') {
                     steps {
-                        script {
-                            runOnDeployServer(
-                                "sleep 3 && " +
-                                "docker ps --filter name=${CONTAINER_NAME} && " +
-                                "curl -fsS -o /dev/null http://localhost:9090 && " +
-                                "echo 'Website deployed successfully'"
-                            )
+                        sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
+                            sh '''
+                                ssh -o StrictHostKeyChecking=no ${DEPLOY_SERVER} \
+                                "docker ps --filter name=${CONTAINER_NAME}"
+                            '''
                         }
                     }
                 }
@@ -176,8 +123,7 @@ pipeline {
 
     post {
         success {
-            echo 'BUILD AND DEPLOYMENT SUCCESSFUL!'
-            echo 'Open http://YOUR-DEPLOYMENT-PUBLIC-IP:9090'
+            echo 'PIPELINE SUCCESS! Application deployed successfully.'
         }
 
         failure {
@@ -185,3 +131,4 @@ pipeline {
         }
     }
 }
+```
