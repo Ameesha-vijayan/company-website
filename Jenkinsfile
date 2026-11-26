@@ -2,6 +2,7 @@ pipeline {
     agent none
 
     environment {
+        DOCKER_HUB_USER = 'ameeshavijayanvs'
         DOCKER_IMAGE = 'company-website'
         DOCKER_TAG = 'latest'
         CONTAINER_NAME = 'company-website'
