@@ -1,121 +1,89 @@
-```groovy
 pipeline {
-    agent any
+    agent {
+        label 'build-server-agent'
+    }
 
     environment {
-        DOCKER_IMAGE = 'ameesha123/company-website'
-        DOCKER_CREDENTIALS = 'dockerhub-credentials'
-        DEPLOY_SERVER = 'ubuntu@YOUR_DEPLOYMENT_SERVER_IP'
-        SSH_CREDENTIALS = 'deployment-server-ssh'
-        CONTAINER_NAME = 'company-website'
-        APP_PORT = '80'
+        DOCKER_IMAGE = 'company-website'
+        DOCKER_TAG = 'latest'
     }
 
     stages {
 
-        stage('BUILD') {
-            stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'main',
+                    url: 'https://github.com/dilnamusthafa81-coder/Company-website.git'
+            }
+        }
 
-                stage('Git Checkout') {
-                    steps {
-                        git branch: 'main',
-                            url: 'https://github.com/Ameesha-vijayan/company-website.git'
-                    }
-                }
+        stage('Build Docker Image') {
+            steps {
+                sh '''
+                    docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
+                '''
+            }
+        }
 
-                stage('Docker Image Build') {
-                    steps {
-                        sh '''
-                            docker build \
-                            -t ${DOCKER_IMAGE}:${BUILD_NUMBER} \
-                            -t ${DOCKER_IMAGE}:latest .
-                        '''
-                    }
-                }
+        stage('Verify Image') {
+            steps {
+                sh '''
+                    docker images
+                '''
+            }
+        }
 
-                stage('Docker Hub Login') {
-                    steps {
-                        withCredentials([
-                            usernamePassword(
-                                credentialsId: "${DOCKER_CREDENTIALS}",
-                                usernameVariable: 'DOCKER_USER',
-                                passwordVariable: 'DOCKER_PASS'
-                            )
-                        ]) {
-                            sh '''
-                                echo "$DOCKER_PASS" | docker login \
-                                -u "$DOCKER_USER" --password-stdin
-                            '''
-                        }
-                    }
-                }
+        stage('Push to Docker Hub') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-credential',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )
+                ]) {
+                    sh '''
+                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
 
-                stage('Docker Image Push') {
-                    steps {
-                        sh '''
-                            docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}
-                            docker push ${DOCKER_IMAGE}:latest
-                        '''
-                    }
+                        docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} \
+                            $DOCKER_USER/${DOCKER_IMAGE}:${DOCKER_TAG}
+
+                        docker push $DOCKER_USER/${DOCKER_IMAGE}:${DOCKER_TAG}
+
+                        docker logout
+                    '''
                 }
             }
         }
 
-        stage('DEPLOY') {
-            stages {
+        stage('Deploy to Server') {
+            agent {
+                label 'deploy-server-agent'
+            }
 
-                stage('Connect to Deployment Server') {
-                    steps {
-                        echo 'Connecting to deployment server...'
-                    }
-                }
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-credential',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )
+                ]) {
+                    sh '''
+                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
 
-                stage('Pull Docker Image') {
-                    steps {
-                        sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
-                            sh '''
-                                ssh -o StrictHostKeyChecking=no ${DEPLOY_SERVER} \
-                                "docker pull ${DOCKER_IMAGE}:${BUILD_NUMBER}"
-                            '''
-                        }
-                    }
-                }
+                        docker pull $DOCKER_USER/${DOCKER_IMAGE}:${DOCKER_TAG}
 
-                stage('Stop Old Container') {
-                    steps {
-                        sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
-                            sh '''
-                                ssh -o StrictHostKeyChecking=no ${DEPLOY_SERVER} \
-                                "docker stop ${CONTAINER_NAME} || true &&
-                                 docker rm ${CONTAINER_NAME} || true"
-                            '''
-                        }
-                    }
-                }
+                        docker stop company-website || true
+                        docker rm company-website || true
 
-                stage('Run New Container') {
-                    steps {
-                        sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
-                            sh '''
-                                ssh -o StrictHostKeyChecking=no ${DEPLOY_SERVER} \
-                                "docker run -d \
-                                --name ${CONTAINER_NAME} \
-                                -p ${APP_PORT}:80 \
-                                ${DOCKER_IMAGE}:${BUILD_NUMBER}"
-                            '''
-                        }
-                    }
-                }
+                        docker run -d \
+                            --name company-website \
+                            -p 9090:80 \
+                            $DOCKER_USER/${DOCKER_IMAGE}:${DOCKER_TAG}
 
-                stage('Verify Deployment') {
-                    steps {
-                        sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
-                            sh '''
-                                ssh -o StrictHostKeyChecking=no ${DEPLOY_SERVER} \
-                                "docker ps --filter name=${CONTAINER_NAME}"
-                            '''
-                        }
-                    }
+                        docker logout
+                    '''
                 }
             }
         }
@@ -123,12 +91,11 @@ pipeline {
 
     post {
         success {
-            echo 'PIPELINE SUCCESS! Application deployed successfully.'
+            echo 'CI/CD Pipeline completed successfully!'
         }
 
         failure {
-            echo 'PIPELINE FAILED! Check Jenkins Console Output.'
+            echo 'CI/CD Pipeline failed. Check the console output.'
         }
     }
 }
-```
